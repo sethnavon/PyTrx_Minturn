@@ -13,6 +13,8 @@ from scipy import stats
 from matplotlib.dates import DateFormatter
 import matplotlib.image as mpimg
 import pandas as pd
+import sklearn
+from sklearn.metrics import mean_squared_error
 
 from PyTrx.CamEnv import GCPs, CamEnv, setProjection, projectUV, projectXYZ
 from PyTrx.Images import CamImage
@@ -59,7 +61,6 @@ ingle_xyz = projectUV(xy, invprojvars)
 # Export xyz locations to csv file
 df = pd.DataFrame(ingle_xyz)
 df.columns= ['x', 'y', 'z']
-
 
 # =============================================================================
 # Calculate projection uncertainty from GCPs
@@ -154,40 +155,39 @@ fig.tight_layout()
 plt.savefig('figures/figure5.jpg', dpi=300)  
 plt.show()
 
-
 # =============================================================================
 # Orthorectify all images 
 # =============================================================================
 
 def constructSeries(lines, lines_filtered, proj):
-     '''Construct projected stage series from dataframe'''
-     xyz_df = pd.DataFrame(columns = ['datetime', 'lineloc', 'x', 'y', 'z'])
-     for index1, row1 in lines_filtered.iterrows():
-         for index2, row2 in df.iterrows():
-             if row1['lineloc'] == index2:
-                 xyz_df = xyz_df.append({'datetime': index1, 
-                                                'lineloc': row1['lineloc'], 
-                                                'x': row2['x'], 
-                                                'y': row2['y'], 
-                                                'z': row2['z'] }, 
-                                                ignore_index = True)
-     slope, intercept, r_value, p_value, std_err = stats.linregress(xyz_df['lineloc'], 
-                                                                    xyz_df['z'])
-     projectdf_z = lines[['lineloc', 'stage_filtered']]
-     projectdf_z['z']= np.nan
-     projectdf_z['underwater'] = np.nan
-     for index, row in projectdf_z.iterrows():
-         if row['lineloc'] <= 300:
-             z_row = row['lineloc'].astype(int)
-             df_row = df.iloc[z_row]
-             row['z'] = df_row['z']
-             row['underwater'] = 1
-         elif row['lineloc'] > 300:
-             row['z'] = slope * row['lineloc'] + intercept
-             row['underwater'] = 0  
-     projectdf_z['z_normalized'] = projectdf_z['z']-projectdf_z['z'].mean()   
-     projectdf_z['nice_datetimes']= projectdf_z.index.strftime("%b %d")
-     return projectdf_z
+    '''Construct projected stage series from dataframe'''
+    xyz_df = pd.DataFrame(columns=['datetime', 'lineloc', 'x', 'y', 'z'])
+    for index1, row1 in lines_filtered.iterrows():
+        for index2, row2 in df.iterrows():
+            if row1['lineloc'] == index2:
+                xyz_df = xyz_df.append({'datetime': index1,
+                                        'lineloc': row1['lineloc'],
+                                        'x': row2['x'],
+                                        'y': row2['y'],
+                                        'z': row2['z']},
+                                       ignore_index=True)
+    slope, intercept, r_value, p_value, std_err = stats.linregress(xyz_df['lineloc'], xyz_df['z'])
+    projectdf_z = lines[['lineloc', 'stage_filtered']].copy()
+    projectdf_z['z'] = np.nan
+    projectdf_z['underwater'] = np.nan
+    for index, row in projectdf_z.iterrows():
+        if row['lineloc'] <= 300:
+            z_row = row['lineloc'].astype(int)
+            df_row = df.iloc[z_row]
+            projectdf_z.at[index, 'z'] = df_row['z']
+            projectdf_z.at[index, 'underwater'] = 1
+        elif row['lineloc'] > 300:
+            projectdf_z.at[index, 'z'] = slope * row['lineloc'] + intercept
+            projectdf_z.at[index, 'underwater'] = 0
+    projectdf_z['z_normalized'] = projectdf_z['z'] - projectdf_z['z'].mean()
+    projectdf_z['nice_datetimes'] = projectdf_z.index.strftime("%b %d")
+    return projectdf_z
+
  
 # Construct 2019 series and export
 mergedf2019 = pd.read_csv('results/manual_detection_results2019.csv', 
@@ -210,7 +210,6 @@ mergedf2021_filtered = mergedf2021.loc[mergedf2021['lineloc'] <= 300]
 projectdf_z2021 = constructSeries(mergedf2021, mergedf2021_filtered, df)
 projectdf_z2021.to_csv('results/projectedresults2021.csv')
 
-
 # =============================================================================
 # Calculate linear regression stats
 # =============================================================================
@@ -220,15 +219,19 @@ def getStats(df, year):
     df_na = df.dropna()
     sl, intr, rval, pval, stderr = stats.linregress(df_na['stage_filtered'], 
                                                     df_na['z_normalized'])
+    range_val = df_na['z_normalized'].max() - df_na['z_normalized'].min()
+    percent_err = stderr/range_val
     print(f'\n\n{year} linear regression values (3 hours)')
     print(f'r squared: {rval}') 
     print(f'std error: {stderr}')
+    print(f'percent err: {percent_err}')
     
     below_water = df_na[df_na['underwater']==0]
     sl, intr, rval, pval, stderr = stats.linregress(below_water['stage_filtered'], 
                                                     below_water['z_normalized'])
     print(f'\nExtrapolated {year} linear regression values (3 hours)')
     print(f'r squared: {rval} \nstd error: {stderr}')
+
     
     above_water = df_na[df_na['underwater']==1]
     sl, intr, rval, pval, stderr = stats.linregress(above_water['stage_filtered'],
@@ -242,19 +245,83 @@ def getStats(df, year):
     
     sl, intr, rval, pval, stderr = stats.linregress(df_na['bubbler_resampled'],
                                                     df_na['z_resampled'])
+    range_val1 = df_na['z_resampled'].max() - df_na['z_resampled'].min()
+    percent_err1 = stderr/range_val1
     print(f'\n{year} linear regression values (days)') 
     print(f'r squared: {rval} \nstd error: {stderr}')
-    
-    meanlvl = df_na.mean(['stage_filtered'])
-    print(f'\n\n{year} mean water level')
-    print(f'r squared: {meanlvl}')
+    print(f'perecent err: {percent_err1}')
     
 
 # Get stats for each time-series year
 getStats(projectdf_z2019, '2019')
 getStats(projectdf_z2020, '2020')   
-getStats(projectdf_z2021, '2021') 
+getStats(projectdf_z2021, '2021')
 
+# =============================================================================
+# Calculate RMSE for above waterline slope projection
+# =============================================================================
+
+def calcRMSE(lines, lines_filtered, proj):
+    '''Construct projected stage series from dataframe'''
+    xyz_df = pd.DataFrame(columns=['datetime', 'lineloc', 'x', 'y', 'z'])
+    for index1, row1 in lines_filtered.iterrows():
+        for index2, row2 in df.iterrows():
+            if row1['lineloc'] == index2:
+                xyz_df = xyz_df.append({'datetime': index1,
+                                        'lineloc': row1['lineloc'],
+                                        'x': row2['x'],
+                                        'y': row2['y'],
+                                        'z': row2['z']},
+                                       ignore_index=True)
+    slope, intercept, r_value, p_value, std_err = stats.linregress(xyz_df['lineloc'], xyz_df['z'])
+    projectdf_z = lines[['lineloc', 'stage_filtered']].copy()
+    projectdf_z['z'] = np.nan
+    projectdf_z['underwater'] = np.nan
+    for index, row in projectdf_z.iterrows():
+        projectdf_z.at[index, 'z'] = slope * row['lineloc'] + intercept
+        if row['lineloc'] <= 300:
+            z_row = row['lineloc'].astype(int)
+            df_row = df.iloc[z_row]
+            projectdf_z.at[index, 'z'] = df_row['z']
+            projectdf_z.at[index, 'underwater'] = 1
+        else:
+            projectdf_z.at[index, 'underwater'] = 0
+    projectdf_z['z_normalized'] = projectdf_z['z'] - projectdf_z['z'].mean()
+    projectdf_z['nice_datetimes'] = projectdf_z.index.strftime("%b %d")
+
+    # Calculate RMSE for slope <= 300
+    slope_le300 = stats.linregress(xyz_df.loc[xyz_df['lineloc'] <= 300]['lineloc'], 
+                                   xyz_df.loc[xyz_df['lineloc'] <= 300]['z']) 
+    projected_z_le300 = slope_le300[0]*projectdf_z.loc[projectdf_z['lineloc'] <= 300]['lineloc'] + slope_le300[1]
+    rmse_le300 = np.sqrt(mean_squared_error(xyz_df.loc[xyz_df['lineloc'] <= 300]['z'], projected_z_le300))
+    r2_le300 = r_value ** 2
+    std_err_le300 = std_err
+    
+    
+    print(f"RMSE for slope <= 300: {rmse_le300}")
+    print(f"R-squared for slope <= 300: {r2_le300}")
+    print(f"Standard error for slope <= 300: {std_err_le300}")
+
+    return projected_z_le300, rmse_le300, r2_le300, std_err_le300
+       
+
+# Construct 2019 series and export
+mergedf2019 = pd.read_csv('results/manual_detection_results2019.csv', 
+                          parse_dates=['key_0'], index_col='key_0')
+mergedf2019_filtered = mergedf2019.loc[mergedf2019['lineloc'] <= 300]
+df_z2019_rmse = calcRMSE(mergedf2019, mergedf2019_filtered, df)
+
+# Construct 2020 series and export
+mergedf2020 = pd.read_csv('results/manual_detection_results2020.csv', 
+                          parse_dates=['key_0'], index_col='key_0')
+mergedf2020_filtered = mergedf2020.loc[mergedf2020['lineloc'] <= 300]
+df_z2020_rmse = calcRMSE(mergedf2020, mergedf2020_filtered, df)
+
+# Construct 2021 series and export
+mergedf2021 = pd.read_csv('results/manual_detection_results2021.csv', 
+                          parse_dates=['key_0'], index_col='key_0')
+mergedf2021_filtered = mergedf2021.loc[mergedf2021['lineloc'] <= 300]
+df_z2021_rmse = calcRMSE(mergedf2021, mergedf2021_filtered, df)
 
 # =============================================================================
 # Plot time-series for all years 
@@ -287,17 +354,16 @@ pltTimeSeries(projectdf_z2021)
 
 def pltScatter(ax, var1, var2, pos1, pos2, label=None):
     '''Plot two variables as scatter subplot'''
-    ax[pos1,pos2].scatter(var1, var2, facecolors='none', edgecolors='black')
-    ax[pos1,pos2].grid(linestyle= 'dashed')
+    ax[pos1,pos2].grid(linestyle= 'dashed', zorder=1)
+    ax[pos1,pos2].scatter(var1, var2, color='black', s=30, alpha = 0.4, zorder=2)
     ax[pos1,pos2].set_ylim(bottom = -0.5, top =4.5)
     ax[pos1,pos2].set_xlim(left = -0.5, right =4.5)
-    # ax[0,0].set_xlabel('Filtered Stage (m)')
-    # ax[0,0].set_ylabel('Water level (m)')
+    ax[pos1,pos2].set_aspect('equal')
     if label is not None:
-        ax[0,0].set_title('2019')
+        ax[pos1,pos2].set_title(label)
  
 # Prime plotting space  
-fig, ax = plt.subplots(nrows=2, ncols=3, sharex = 'col', sharey= 'row')
+fig, ax = plt.subplots(nrows=2, ncols=3, sharex = 'col', sharey= 'row', figsize=(10, 6))
 
 # Plot all filtered stages as scatter subplots
 pltScatter(ax, projectdf_z2019['stage_filtered'], 
@@ -323,43 +389,50 @@ fig.text(0.04, 0.5, 'Camera Derived Stage (m)', va='center', rotation='vertical'
 fig.savefig('figures/figure6.png', dpi = 600)
 plt.show()
 
-
 # =============================================================================
 # Plot three-year time-series 
 # =============================================================================
 
 def pltSeries(ax, df, dt1, dt2, pos, dt_form, label1=None, label2=None):
     '''Plot yearly record as subplot time-series'''
-    ax[pos].plot(df.index, df['z_normalized'], color='black', 
-                label=label1)
-    ax[pos].plot(df.index, df['stage_filtered'], color='#1f77b4', 
-                label=label2)
+    line1 = ax[pos].axhline(y=1.74, color='red', linestyle='--', label='Extrapolation zone')
+    line2, = ax[pos].plot(df.index, df['z_normalized'], color='black', label=label1)
+    line3, = ax[pos].plot(df.index, df['stage_filtered'], color='#1f77b4', label=label2)
     ax[pos].grid(linestyle='dashed')
     ax[pos].set_ylim(-5, 5)
     ax[pos].set_xlim([dt1, dt2])
     ax[pos].set_ylabel(str(dt1.year) + ' stage (m)')
     ax[pos].xaxis.set_major_formatter(dt_form)
-    ax[pos].tick_params(axis='both', which='major', direction='out', 
-                        labelsize=10, width=2)
+    ax[pos].tick_params(axis='both', which='major', direction='out', labelsize=10, width=2)
+    return line1, line2, line3
 
 # Prime plotting space and set date formatting
-fig, ax = plt.subplots(3, constrained_layout = True)
+fig, ax = plt.subplots(3, figsize=(8, 8))
 date_form = DateFormatter("%b %d")
 
 # Plot each time-series as subplot
-pltSeries(ax, projectdf_z2019, datetime.date(2019, 6, 8), 
-          datetime.date(2019, 9, 8), 0, date_form)
-pltSeries(ax, projectdf_z2020, datetime.date(2020, 6, 8), 
-          datetime.date(2020, 9, 8), 1, date_form)
-pltSeries(ax, projectdf_z2021, datetime.date(2021, 6, 8), 
-          datetime.date(2021, 9, 8), 2, date_form, 'Camera Derived Stage',
-          'Bubble-Gauge Stage')
-fig.legend(bbox_to_anchor=(0.72,0))
+line1 = pltSeries(ax, projectdf_z2019, datetime.date(2019, 6, 8), datetime.date(2019, 9, 8), 0, date_form)
+line2 = pltSeries(ax, projectdf_z2020, datetime.date(2020, 6, 8), datetime.date(2020, 9, 8), 1, date_form)
+line3 = pltSeries(ax, projectdf_z2021, datetime.date(2021, 6, 8), datetime.date(2021, 9, 8), 2, date_form, 'Camera Derived Stage', 'Bubble-Gauge Stage')
+
+ax[0].xaxis.set_ticklabels([])
+ax[1].xaxis.set_ticklabels([])
+
+# Add legend for all the lines and set their labels
+lines = [line3[1], line3[2], line1[0]]
+labels = ['Camera Derived Stage', 'Bubble-Gauge Stage', 'Extrapolation zone']
+
+# Add a new axis for the legend and position it at the bottom
+leg_ax = fig.add_axes([0, -0.1, 1, 0.1])
+leg_ax.axis('off')
+leg_ax.legend(lines, labels, loc='center', ncol=3)
+
+# Adjust spacing between plots and bottom of figure
+fig.subplots_adjust(bottom=0.005)
 
 # Save and show plot
 fig.savefig('figures/figure7.png', dpi = 600, bbox_inches='tight')
 plt.show()
-
 
 # =============================================================================
 print('Finished')
