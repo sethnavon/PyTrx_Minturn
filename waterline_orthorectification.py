@@ -390,10 +390,10 @@ fig.savefig('figures/figure6.png', dpi = 600)
 plt.show()
 
 # =============================================================================
-# Plot three-year time-series 
+# Plot three year time series 
 # =============================================================================
 
-def pltSeries(ax, df, dt1, dt2, pos, dt_form, label1=None, label2=None):
+def pltSeries(ax, df, dt1, dt2, pos, breakup, freezeup, dt_form, label1=None, label2=None):
     '''Plot yearly record as subplot time-series'''
     line1 = ax[pos].axhline(y=1.74, color='red', linestyle='--', label='Extrapolation zone')
     line2, = ax[pos].plot(df.index, df['z_normalized'], color='black', label=label1)
@@ -404,6 +404,18 @@ def pltSeries(ax, df, dt1, dt2, pos, dt_form, label1=None, label2=None):
     ax[pos].set_ylabel(str(dt1.year) + ' stage (m)')
     ax[pos].xaxis.set_major_formatter(dt_form)
     ax[pos].tick_params(axis='both', which='major', direction='out', labelsize=10, width=2)
+    
+    # Add vertical dashed lines at the beginning and end of each time series
+    ax[pos].axvline(x=breakup, color='orange', linestyle='--')
+    ax[pos].axvline(x=freezeup, color='orange', linestyle='--')
+    
+    # Add text labels for breakup and freeze-up
+    ypos = ax[pos].get_ylim()[0] + 0.5 * (ax[pos].get_ylim()[1] - ax[pos].get_ylim()[0])
+    ax[pos].text(breakup, ypos, 'Break-up', ha='right', va='center', rotation=90)
+    
+
+    ax[pos].text(freezeup, ypos, 'Freeze-up', ha='left', va='center', rotation=90)
+
     return line1, line2, line3
 
 # Prime plotting space and set date formatting
@@ -411,9 +423,9 @@ fig, ax = plt.subplots(3, figsize=(8, 8))
 date_form = DateFormatter("%b %d")
 
 # Plot each time-series as subplot
-line1 = pltSeries(ax, projectdf_z2019, datetime.date(2019, 6, 8), datetime.date(2019, 9, 8), 0, date_form)
-line2 = pltSeries(ax, projectdf_z2020, datetime.date(2020, 6, 8), datetime.date(2020, 9, 8), 1, date_form)
-line3 = pltSeries(ax, projectdf_z2021, datetime.date(2021, 6, 8), datetime.date(2021, 9, 8), 2, date_form, 'Camera Derived Stage', 'Bubble-Gauge Stage')
+line1 = pltSeries(ax, projectdf_z2019, datetime.datetime(2019, 6, 5, 0), datetime.datetime(2019, 9, 8, 23), 0, datetime.datetime(2019, 7, 12, 3), datetime.datetime(2019, 9, 2, 15), date_form)
+line2 = pltSeries(ax, projectdf_z2020, datetime.datetime(2020, 6, 5, 0), datetime.datetime(2020, 9, 8, 23), 1, datetime.datetime(2020, 6, 21, 18), datetime.datetime(2020, 9, 1, 21), date_form)
+line3 = pltSeries(ax, projectdf_z2021, datetime.datetime(2021, 6, 5, 0), datetime.datetime(2021, 9, 8, 23), 2, datetime.datetime(2021, 6, 8, 3), datetime.datetime(2021, 9, 5, 21), date_form, 'Camera Derived Stage', 'Bubble-Gauge Stage')
 
 ax[0].xaxis.set_ticklabels([])
 ax[1].xaxis.set_ticklabels([])
